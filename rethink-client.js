@@ -64,7 +64,8 @@ Rethink.Table.prototype._registerStore = function () {
 
   var ok = self._connection.registerStore(self.name, {
     beginUpdate: function (batchSize, reset) {
-      console.log('begin update'); return;
+      //console.log('begin update'); return;
+      return;
       if (batchSize > 1 || reset)
         self._pauseObservers();
       if (reset) {
@@ -122,7 +123,7 @@ Rethink.Table.prototype._registerStore = function () {
       }
     },
     endUpdate: function () {
-      console.log('endupdate')
+      //console.log('endupdate')
       return;
       self._resumeObservers();
     },
