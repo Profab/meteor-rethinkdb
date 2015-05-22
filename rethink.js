@@ -252,11 +252,8 @@ var observe = function (callbacks) {
       // Handle single point queries here.
       var initializing = true;
       if (initialResult) {
-        // Send the initial value here
-        Meteor.defer(function () {
-          // This is to make sure it's Fiber-wrapped
-          cbs.added(initialResult);  
-        });
+        // Send the initial value here, Fiber-wrapped
+        Meteor.bindEnvironment(cbs.added.bind(cbs, initialResult))();
       }
       // Unblock
       initValuesFuture.return();
