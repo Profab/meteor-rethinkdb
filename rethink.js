@@ -97,7 +97,7 @@ attachCursorMethod('run', function (proto) {
 
     var future = null;
     if (! callback) {
-      future = new Future;
+      future = new Future();
       callback = future.resolver();
     }
 
@@ -170,6 +170,34 @@ var registerSyntheticEvent = function (table, cb) {
   });
 };
 
+var changeFeedHandler = function (err, notif) {
+  var cbs = this;
+  if (!err) {
+    if (notif.old_val === undefined && notif.new_val === null) {
+      // nothing found
+      return;
+    }
+    if (! notif.old_val) {
+      cbs.added(notif.new_val);
+      return;
+    }
+    if (! notif.new_val) {
+      cbs.removed(notif.old_val);
+      return;
+    }
+    if (notif.new_val.id === notif.old_val.id) {
+      cbs.changed(notif.new_val, notif.old_val);
+      return;
+    }
+
+    // one val was removed, another was added
+    cbs.removed(notif.old_val);
+    cbs.added(notif.new_val);
+  } else {
+    cbs.error(err);
+  }
+};
+
 var observe = function (callbacks) {
   var cbs = {
     added: callbacks.added || function () {},
@@ -179,61 +207,76 @@ var observe = function (callbacks) {
   };
 
   var self = this;
-  var stream;
-  var initValuesFuture = new Future;
-
-  // Get initial results first
-  self.run().each(Meteor.bindEnvironment(function (err, doc) {
-    if (!err) {
-      cbs.added(doc);
-    } else {
-      cbs.error(err);
-      future.throw(err);
-    }
-  }), Meteor.bindEnvironment(function () {
-    initValuesFuture.return();
-    // This callback is the onFinished callback that gets called
-    // After all initial values have been gotten, then we can create
-    // our awesome change feeds! Yea!
-    stream = self.changes().run();
-    stream.each(Meteor.bindEnvironment(function (err, notif) {
-      if (!err) {
-        if (notif.old_val === undefined && notif.new_val === null) {
-          // nothing found
-          return;
-        }
-        if (! notif.old_val) {
-          cbs.added(notif.new_val);
-          return;
-        }
-        if (! notif.new_val) {
-          cbs.removed(notif.old_val);
-          return;
-        }
-        if (notif.new_val.id === notif.old_val.id) {
-          cbs.changed(notif.new_val, notif.old_val);
-          return;
-        }
-
-        // one val was removed, another was added
-        cbs.removed(notif.old_val);
-        cbs.added(notif.new_val);
-      } else {
-        cbs.error(err);
-      }
-    }));
-  }));
-    
-  // This is to make it work like a regular
-  // Mongo observe, where it blocks on the initial
-  // values, maybe this might change?
-  initValuesFuture.wait();
+  var streamCursor;
+  var initValuesFuture = new Future();
   
-  return {
-    stop: function () {
-      wait(stream.close());
+  // Get initial results first
+  // XXX Need to handle queries that literally don't return cursors
+  // but rather return single documents
+  try {
+    var initialResult = self.run();
+    // Check if it's iterable, if not, it means it's a single document
+    // returned by a query like .min() or .max()
+    if (_.isFunction(initialResult.each)) {
+      initialResult.each(Meteor.bindEnvironment(function (err, doc) {
+        if (!err) {
+          cbs.added(doc);
+        } else {
+          initialResult.close();
+          initValuesFuture.isResolved() ? cbs.error(err) : initValuesFuture.throw(err);
+        }
+      }), Meteor.bindEnvironment(function () {
+        // This callback is the onFinished callback that gets called
+        // after we're done iterating the cursor.
+        // This is also the spot to resolve the future, so that the observer can finish blocking
+        if (!initValuesFuture.isResolved()) {
+          initValuesFuture.return();
+        }
+        // After all initial values have been gotten, then we can create
+        // our awesome change feeds! Yea!
+        streamCursor = self.changes().run();
+        streamCursor.each(Meteor.bindEnvironment(changeFeedHandler.bind(cbs)));
+      }));
+    } else {
+      // Handle single point queries here.
+      // Because they give you an initial value, there's
+      // no need to get it and return it on .added
+      var initializing = true;
+      // Send the initial value here
+      cbs.added(initialResult);
+      // Unblock
+      initValuesFuture.return();
+      // Start the change-feed
+      streamCursor = self.changes().run();
+      streamCursor.each(Meteor.bindEnvironment(function (err, notif) {
+        if (err) {
+          initValuesFuture.isResolved() ? cbs.error(err) : initValuesFuture.throw(err);
+        } else if (initializing) {
+          // This skips the initial value
+          // Assuming that it is
+          initializing = false;
+        } else {
+          changeFeedHandler.apply(cbs, arguments);  
+        }
+      }));
     }
-  };
+    
+      
+    // This is to make it work like a regular
+    // Mongo observe, where it blocks on the initial
+    // values, maybe this might change?
+    // I suppose that if you don't want your observe to not
+    // block, you can always wrap it in a Meteor.defer
+    initValuesFuture.wait();
+    
+    return {
+      stop: function () {
+        streamCursor && wait(streamCursor.close());
+      }
+    };
+  } catch (e) {
+    cbs.error(e);
+  }
 };
 
 attachCursorMethod('observe', function () {
