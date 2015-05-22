@@ -59,19 +59,6 @@ Rethink.Table = function (name, options) {
   self._connection.methods(methods);
 };
 
-
-// These injected methods _getCollectionName are to allow
-// publishing arrays of cursors
-Rethink.Table.prototype._getCollectionName = function () {
-  return this.name;
-};
-
-attachCursorMethod('_getCollectionName', function () {
-  return function () {
-    return this._table.name;
-  };
-});
-
 Rethink.Table._checkName = function (name) {
   var tables = r.tableList().run(connection);
   if (tables.indexOf(name) === -1)
@@ -150,6 +137,18 @@ attachCursorMethod('fetch', function () {
   return function () {
     var self = this;
     return wait(self.run().toArray());
+  };
+});
+
+// These injected methods _getCollectionName are to allow
+// publishing arrays of cursors
+Rethink.Table.prototype._getCollectionName = function () {
+  return this.name;
+};
+
+attachCursorMethod('_getCollectionName', function () {
+  return function () {
+    return this._table.name;
   };
 });
 
