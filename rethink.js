@@ -64,7 +64,7 @@ Rethink.Table = function (name, options) {
 // publishing arrays of cursors
 Rethink.Table.prototype._getCollectionName = function () {
   return this.name;
-};;
+};
 
 attachCursorMethod('_getCollectionName', function () {
   return function () {
@@ -255,8 +255,10 @@ var observe = function (callbacks) {
       // Because they give you an initial value, there's
       // no need to get it and return it on .added
       var initializing = true;
-      // Send the initial value here
-      cbs.added(initialResult);
+      if (initialResult) {
+        // Send the initial value here
+        cbs.added(initialResult);
+      }
       // Unblock
       initValuesFuture.return();
       // Start the change-feed
@@ -288,7 +290,7 @@ var observe = function (callbacks) {
       }
     };
   } catch (e) {
-    cbs.error(e);
+    initValuesFuture.isResolved() ? cbs.error(e) : initValuesFuture.throw(e);
   }
 };
 
@@ -332,7 +334,7 @@ Rethink.Table._publishCursor = function (cursor, sub, tableName) {
 
   // register stop callback (expects lambda w/ no args).
   sub.onStop(function () {
-    observeHandle.stop();
+    observeHandle && observeHandle.stop();
   });
 };
 
