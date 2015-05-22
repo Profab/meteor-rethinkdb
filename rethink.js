@@ -257,7 +257,10 @@ var observe = function (callbacks) {
       var initializing = true;
       if (initialResult) {
         // Send the initial value here
-        cbs.added(initialResult);
+        Meteor.defer(function () {
+          // This is to make sure it's Fiber-wrapped
+          cbs.added(initialResult);  
+        });
       }
       // Unblock
       initValuesFuture.return();
