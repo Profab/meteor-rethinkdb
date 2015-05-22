@@ -223,13 +223,11 @@ var observe = function (callbacks) {
   var streamCursor;
   var initValuesFuture = new Future();
   
-  // Get initial results first
-  // XXX Need to handle queries that literally don't return cursors
-  // but rather return single documents
   try {
+    // Get initial results first
     var initialResult = self.run();
     // Check if it's iterable, if not, it means it's a single document
-    // returned by a query like .min() or .max()
+    // returned by a query like .min(), .max(), or .get()
     if (_.isFunction(initialResult.each)) {
       initialResult.each(Meteor.bindEnvironment(function (err, doc) {
         if (!err) {
@@ -246,14 +244,12 @@ var observe = function (callbacks) {
           initValuesFuture.return();
         }
         // After all initial values have been gotten, then we can create
-        // our awesome change feeds! Yea!
+        // our awesome change-feeds! Yea!
         streamCursor = self.changes().run();
         streamCursor.each(Meteor.bindEnvironment(changeFeedHandler.bind(cbs)));
       }));
     } else {
       // Handle single point queries here.
-      // Because they give you an initial value, there's
-      // no need to get it and return it on .added
       var initializing = true;
       if (initialResult) {
         // Send the initial value here
