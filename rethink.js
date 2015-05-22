@@ -179,82 +179,63 @@ var observe = function (callbacks) {
   };
 
   var self = this;
-
+  var stream;
   var initValuesFuture = new Future;
-  var initializing = false;
 
-  var stream = self.union().changes({ includeStates: true }).run();
-  stream.each(Meteor.bindEnvironment(function (err, notif) {
-    if (err) {
-      if (initValuesFuture.isResolved())
-        cbs.error(err);
-      else
-        initValuesFuture.throw(err);
-      return;
+  // Get initial results first
+  self.run().each(Meteor.bindEnvironment(function (err, doc) {
+    if (!err) {
+      cbs.added(doc);
+    } else {
+      cbs.error(err);
+      future.throw(err);
     }
-
-    // handle state changes
-    if (notif.state) {
-      if (notif.state === 'ready') {
-        if (initializing) {
-          initValuesFuture.return();
-        } else {
-          initValuesFuture.throw(
-            new Error(
-              "Currently can only observe point queries and orderBy/limit queries. For example: Table.get(id); Table.orderBy({ index: 'id' }).limit(4)."));
+  }), Meteor.bindEnvironment(function () {
+    initValuesFuture.return();
+    // This callback is the onFinished callback that gets called
+    // After all initial values have been gotten, then we can create
+    // our awesome change feeds! Yea!
+    stream = self.changes().run();
+    stream.each(Meteor.bindEnvironment(function (err, notif) {
+      if (!err) {
+        if (notif.old_val === undefined && notif.new_val === null) {
+          // nothing found
+          return;
         }
-      } else if (notif.state === 'initializing') {
-        initializing = true;
+        if (! notif.old_val) {
+          cbs.added(notif.new_val);
+          return;
+        }
+        if (! notif.new_val) {
+          cbs.removed(notif.old_val);
+          return;
+        }
+        if (notif.new_val.id === notif.old_val.id) {
+          cbs.changed(notif.new_val, notif.old_val);
+          return;
+        }
+
+        // one val was removed, another was added
+        cbs.removed(notif.old_val);
+        cbs.added(notif.new_val);
+      } else {
+        cbs.error(err);
       }
-      return;
-    }
-
-    if (notif.old_val === undefined && notif.new_val === null) {
-      // nothing found
-      return;
-    }
-
-    // at this point the notification has two fields: old_val and new_val
-
-    // check for the "special" doc
-    if (notif.new_val && notif.new_val.id === SYNTH_EVENT_ID) {
-      var ts = notif.new_val.ts;
-      var q = self._table._synthEventCallbacks;
-      while (q.length > 0 && q[0].ts <= ts) {
-        var front = q.shift();
-        Meteor.defer(front.f);
-      }
-      self._table._lastSynthEvent = ts;
-      return;
-    }
-
-    // it is a regular doc, push an event for it
-    if (! notif.old_val) {
-      cbs.added(notif.new_val);
-      return;
-    }
-    if (! notif.new_val) {
-      cbs.removed(notif.old_val);
-      return;
-    }
-    if (notif.new_val.id === notif.old_val.id) {
-      cbs.changed(notif.new_val, notif.old_val);
-      return;
-    }
-
-    // one val was removed, another was added
-    cbs.removed(notif.old_val);
-    cbs.added(notif.new_val);
+    }));
   }));
-
+    
+  // This is to make it work like a regular
+  // Mongo observe, where it blocks on the initial
+  // values, maybe this might change?
   initValuesFuture.wait();
-
+  
   return {
     stop: function () {
       wait(stream.close());
     }
   };
 };
+
 attachCursorMethod('observe', function () {
   return observe;
 });
@@ -267,7 +248,6 @@ Rethink.Table.prototype._publishCursor = function (sub) {
 attachCursorMethod('_publishCursor', function () {
   return function (sub) {
     var self = this;
-
     try {
       Rethink.Table._publishCursor(self, sub, self._table.name);
     } catch (err) {
