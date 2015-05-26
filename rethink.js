@@ -182,34 +182,6 @@ var registerSyntheticEvent = function (table, cb) {
   });
 };
 
-var changeFeedHandler = function (err, notif) {
-  var cbs = this;
-  if (!err) {
-    if (notif.old_val === undefined && notif.new_val === null) {
-      // nothing found
-      return;
-    }
-    if (! notif.old_val) {
-      cbs.added(notif.new_val);
-      return;
-    }
-    if (! notif.new_val) {
-      cbs.removed(notif.old_val);
-      return;
-    }
-    if (notif.new_val.id === notif.old_val.id) {
-      cbs.changed(notif.new_val, notif.old_val);
-      return;
-    }
-
-    // one val was removed, another was added
-    cbs.removed(notif.old_val);
-    cbs.added(notif.new_val);
-  } else {
-    cbs.error(err);
-  }
-};
-
 var observe = function (callbacks) {
   var cbs = {
     added: callbacks.added || function () {},
@@ -221,56 +193,71 @@ var observe = function (callbacks) {
   var self = this;
   var streamCursor;
   var initValuesFuture = new Future();
+  var initializing = false;
   
   try {
-    // Get initial results first
-    var initialResult = self.run();
-    // Check if it's iterable, if not, it means it's a single document
-    // returned by a query like .min(), .max(), or .get()
-    if (_.isFunction(initialResult.each)) {
-      initialResult.each(Meteor.bindEnvironment(function (err, doc) {
-        if (!err) {
-          cbs.added(doc);
-        } else {
-          initialResult.close();
-          initValuesFuture.isResolved() ? cbs.error(err) : initValuesFuture.throw(err);
-        }
-      }), Meteor.bindEnvironment(function () {
-        // This callback is the onFinished callback that gets called
-        // after we're done iterating the cursor.
-        // This is also the spot to resolve the future, so that the observer can finish blocking
-        if (!initValuesFuture.isResolved()) {
-          initValuesFuture.return();
-        }
-        // After all initial values have been gotten, then we can create
-        // our awesome change-feeds! Yea!
-        streamCursor = self.changes().run();
-        streamCursor.each(Meteor.bindEnvironment(changeFeedHandler.bind(cbs)));
-      }));
-    } else {
-      // Handle single point queries here.
-      var initializing = true;
-      if (initialResult) {
-        // Send the initial value here, Fiber-wrapped
-        Meteor.bindEnvironment(cbs.added.bind(cbs, initialResult))();
+    streamCursor = self.changes({ includeStates: true }).run();
+    streamCursor.each(Meteor.bindEnvironment(function (err, notif) {
+      if (err) {
+        initValuesFuture.isResolved() ? cbs.error(err) : initValuesFuture.throw(err);
+        return;
       }
-      // Unblock
-      initValuesFuture.return();
-      // Start the change-feed
-      streamCursor = self.changes().run();
-      streamCursor.each(Meteor.bindEnvironment(function (err, notif) {
-        if (err) {
-          initValuesFuture.isResolved() ? cbs.error(err) : initValuesFuture.throw(err);
-        } else if (initializing) {
-          // This skips the initial value
-          // Assuming that it is
-          initializing = false;
-        } else {
-          changeFeedHandler.apply(cbs, arguments);  
+      // handle state changes
+      if (notif.state) {
+        if (notif.state === 'ready') {
+          if (initializing) {
+            initValuesFuture.return();
+          } else {
+            // If the there was no 'state' for 'initializing', then we need
+            // send down initial values
+            var initialResult = self.run();
+            if (_.isFunction(initialResult.toArray)) {
+              wait(initialResult.toArray()).forEach(function (doc) {
+                cbs.added(doc);
+              });
+            } else {
+              // Some single query of some sort?
+              // highly unlikely but let's see
+              if (initialResult) {
+                // Send the initial value here, Fiber-wrapped
+                cbs.added(initialResult);
+              }
+            }
+            // Unblock
+            initValuesFuture.return();
+          }
+        } else if (notif.state === 'initializing') {
+          // Only queries that have initial values will send this 'state'
+          initializing = true;
         }
-      }));
-    }
-    
+        return;
+      }
+  
+      if (notif.old_val === undefined && notif.new_val === null) {
+        // nothing found
+        return;
+      }
+  
+      // at this point the notification has two fields: old_val and new_val
+  
+      // it is a regular doc, push an event for it
+      if (! notif.old_val) {
+        cbs.added(notif.new_val);
+        return;
+      }
+      if (! notif.new_val) {
+        cbs.removed(notif.old_val);
+        return;
+      }
+      if (notif.new_val.id === notif.old_val.id) {
+        cbs.changed(notif.new_val, notif.old_val);
+        return;
+      }
+  
+      // one val was removed, another was added
+      cbs.removed(notif.old_val);
+      cbs.added(notif.new_val);
+    }));
       
     // This is to make it work like a regular
     // Mongo observe, where it blocks on the initial
