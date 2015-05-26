@@ -5,13 +5,14 @@ var testCollName = 'meteor_rethink_tests';
 function setupCollection (done) {
   try {
     r.tableDrop(testCollName).run(Rethink._connection);
-  } catch (err){}
+  } catch (err) {}
 
   r.tableCreate(testCollName).run(Rethink._connection);
   coll = new Rethink.Table(testCollName);
 
   done();
 }
+
 function cleanupCollection (done) {
   r.tableDrop(testCollName).run(Rethink._connection);
   coll._deregisterMethods();
@@ -96,9 +97,9 @@ describe('Observing a cursor', function () {
   });
 
   it('notices inserts', function (done) {
-    finishObserve(function () {
+    //finishObserve(function () {
       coll.insert({ obj: 2 }).run();
-    });
+    //});
     expect(messages).to.have.length(1);
     var m = messages.shift();
     expect(m[0]).to.be.equal('a');
@@ -107,9 +108,9 @@ describe('Observing a cursor', function () {
   });
 
   it('notices updates', function (done) {
-    finishObserve(function () {
+    //finishObserve(function () {
       coll.filter(r.row('obj').gt(1)).update({obj: r.row('obj').add(3)}).run();
-    });
+    //});
     expect(messages).to.have.length(1);
     var m = messages.shift();
     expect(m[0]).to.be.equal('c');
@@ -119,9 +120,9 @@ describe('Observing a cursor', function () {
   });
 
   it('notices removes', function (done) {
-    finishObserve(function () {
+    //finishObserve(function () {
       coll.filter(r.row('obj').lt(3)).delete().run();
-    });
+    //});
     expect(messages).to.have.length(1);
     var m = messages.shift();
     expect(m[0]).to.be.equal('r');
@@ -152,14 +153,21 @@ describe('Observing a ordered limited cursor', function () {
     coll.insert({id:'c'}).run();
     coll.insert({id:'d'}).run();
     h = coll.orderBy({index:'id'}).limit(2).observe({
-      added: function (doc) { messages.push(['a', doc]); },
-      changed: function (newDoc, oldDoc) { messages.push(['c', newDoc, oldDoc]); },
-      removed: function (doc) { messages.push(['r', doc]); }
+      added: function (doc) { 
+        messages.push(['a', doc]); 
+      },
+      changed: function (newDoc, oldDoc) { 
+        messages.push(['c', newDoc, oldDoc]); 
+      },
+      removed: function (doc) { 
+        messages.push(['r', doc]); 
+      }
     });
     done();
   });
   after(function (done) {
     h.stop();
+    doneObserving = true;
     done();
   });
 
@@ -176,11 +184,11 @@ describe('Observing a ordered limited cursor', function () {
   });
 
   it('correctly handles push-in/pull-out of a new member of limited set', function (done) {
-    finishObserve(function () {
+    //finishObserve(function () {
       coll.insert({
         id: 'a'
       }).run();
-    });
+    //});
     expect(messages).to.have.length(2);
     var m;
     m = messages.shift();
@@ -193,6 +201,42 @@ describe('Observing a ordered limited cursor', function () {
   });
 });
 
+describe('Observing a .filter() cursor', function () {
+  before(setupCollection);
+  after(cleanupCollection);
+
+  var messages;
+  var h;
+
+  before(function (done) {
+    messages = [];
+    //
+    coll.insert({id:'b'}).run();
+    coll.insert({id:'c'}).run();
+    coll.insert({id:'d'}).run();
+    h = coll.filter({}).observe({
+      added: function (doc) { 
+        messages.push(['a', doc]); 
+      },
+      changed: function (newDoc, oldDoc) { 
+        messages.push(['c', newDoc, oldDoc]); 
+      },
+      removed: function (doc) { 
+        messages.push(['r', doc]); 
+      }
+    });
+    done();
+  });
+  after(function (done) {
+    h.stop();
+    done();
+  });
+
+  it('gets initial set', function (done) {
+    expect(messages).to.have.length(3);
+    done();
+  });
+});
 
 function finishObserve (f) {
   var fence = new DDPServer._WriteFence;
